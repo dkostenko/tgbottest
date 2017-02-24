@@ -1,0 +1,4 @@
+package: github.com/dkostenko/tgbottest
+import:
+- package: github.com/jpadilla/ivona-go
+  version: ~0.1.0

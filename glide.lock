@@ -1,0 +1,6 @@
+hash: 4663bcf9eb0447f3fc7ae0a069322526f952a71a92151872b410a91a770df879
+updated: 2017-02-24T12:20:46.875620494+03:00
+imports:
+- name: github.com/jpadilla/ivona-go
+  version: a9a48641d9c018deb99b50dd427710f7b6c1d4e6
+testImports: []

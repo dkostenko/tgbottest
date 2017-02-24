@@ -1,15 +1,21 @@
 package tg
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"log"
+	"mime/multipart"
 	"net/http"
+	"strconv"
 )
 
 // Client - менеджер общения с Telegram Bot API.
 type Client interface {
 	GetMessagesChan() (<-chan *Message, error)
+	SendAudio(chatID int, audio []byte)
 }
 
 type client struct {
@@ -21,6 +27,12 @@ type client struct {
 type Message struct {
 	MessageID int    `json:"message_id"`
 	Text      string `json:"text"`
+	Chat      *Chat  `json:"chat"`
+}
+
+// Chat описывает чат в системе Telegram.
+type Chat struct {
+	ID int `json:"id"`
 }
 
 // Update https://core.telegram.org/bots/api#update
@@ -31,8 +43,9 @@ type Update struct {
 
 // Response -
 type Response struct {
-	Ok     bool      `json:"ok"`
-	Result []*Update `json:"result"`
+	Ok        bool            `json:"ok"`
+	Result    json.RawMessage `json:"result"`
+	ErrorCode int             `json:"error_code"`
 }
 
 // NewClient - конструктор менеджера общения с Telegram Bot API.
@@ -40,7 +53,7 @@ func NewClient(token string) Client {
 	return &client{token: token}
 }
 
-func (c *client) makeRequest(uri string) (*Response, error) {
+func (c *client) makeGETRequest(uri string) (*Response, error) {
 	res, err := http.Get(uri)
 	if err != nil {
 		return nil, err
@@ -61,6 +74,54 @@ func (c *client) makeRequest(uri string) (*Response, error) {
 	return resp, nil
 }
 
+func (c *client) makePOSTRequest(uri, fileKey, fileName string, file []byte,
+	fields map[string]string) (*Response, error) {
+	var b bytes.Buffer
+	w := multipart.NewWriter(&b)
+
+	buf := bytes.NewBuffer(file)
+
+	fw, err := w.CreateFormFile(fileKey, fileName)
+	if err != nil {
+		return nil, err
+	}
+	if _, err = io.Copy(fw, buf); err != nil {
+		log.Println(err)
+		return nil, err
+	}
+
+	for k, v := range fields {
+		w.WriteField(k, v)
+	}
+
+	w.Close()
+
+	req, err := http.NewRequest("POST", uri, &b)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+
+	client := &http.Client{}
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &Response{}
+	err = json.Unmarshal(body, result)
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
 // GetMessagesChan возвращает канал с сообщениями.
 func (c *client) GetMessagesChan() (<-chan *Message, error) {
 	msgChan := make(chan *Message)
@@ -69,8 +130,15 @@ func (c *client) GetMessagesChan() (<-chan *Message, error) {
 		for {
 			uri := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?timeout=100&offset=%d",
 				c.token, c.lastUpdID+1)
-			resp, _ := c.makeRequest(uri)
-			for _, upd := range resp.Result {
+			resp, _ := c.makeGETRequest(uri)
+
+			var updates []*Update
+			err := json.Unmarshal(resp.Result, &updates)
+			if err != nil {
+				panic(err)
+			}
+
+			for _, upd := range updates {
 				c.lastUpdID = upd.UpdateID
 				msgChan <- upd.Message
 			}
@@ -78,4 +146,22 @@ func (c *client) GetMessagesChan() (<-chan *Message, error) {
 	}()
 
 	return msgChan, nil
+}
+
+// SendAudio ...
+func (c *client) SendAudio(chatID int, audio []byte) {
+	uri := fmt.Sprintf("https://api.telegram.org/bot%s/sendAudio", c.token)
+
+	resp, err := c.makePOSTRequest(uri, "audio", "audio.mp3", audio, map[string]string{
+		"chat_id": strconv.Itoa(chatID),
+	})
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	if !resp.Ok {
+		err := fmt.Errorf("Tg error %d", resp.ErrorCode)
+		log.Println(err)
+		return
+	}
 }
