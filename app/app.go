@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"log"
 
 	"github.com/dkostenko/tgbottest/tg"
@@ -14,11 +15,12 @@ type Manager interface {
 
 type manager struct {
 	tgClient    tg.Client
-	ivonaClient *ivona.Ivona
+	ivonaClient ivonaInterface
+	logger      logger
 }
 
 // NewManager ...
-func NewManager(tgClient tg.Client, ivonaClient *ivona.Ivona) Manager {
+func NewManager(tgClient tg.Client, ivonaClient ivonaInterface) Manager {
 	return &manager{
 		tgClient:    tgClient,
 		ivonaClient: ivonaClient,
@@ -36,21 +38,27 @@ func (m *manager) Listen() {
 }
 
 // handleMsg ...
-func (m *manager) handleMsg(msg *tg.Message) {
-	// TODO Валидация текста сообщения.
-	log.Println("=====")
-	log.Println(msg)
-	log.Println(msg.Chat)
+func (m *manager) handleMsg(msg *tg.Message) error {
+	if msg == nil {
+		return errors.New("Nil pointer on msg")
+	}
 
-	options := ivona.NewSpeechOptions(msg.Text)
-	options.Voice.Language = "ru-RU"
-	options.Voice.Name = "Maxim"
-	options.Voice.Gender = "Male"
+	options := m.buildIvonaOptions(msg.Text)
 
 	r, err := m.ivonaClient.CreateSpeech(options)
 	if err != nil {
-		log.Println(err)
+		m.logger.Println(err)
+		return err
 	}
 
 	m.tgClient.SendAudio(msg.Chat.ID, r.Audio)
+	return nil
+}
+
+func (m *manager) buildIvonaOptions(text string) ivona.SpeechOptions {
+	options := ivona.NewSpeechOptions(text)
+	options.Voice.Language = "ru-RU"
+	options.Voice.Name = "Maxim"
+	options.Voice.Gender = "Male"
+	return options
 }
